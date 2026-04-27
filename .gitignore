@@ -3,5 +3,6 @@
 /build
 /.cache
 
-/assets/*.glb
+./*.glb
+public/*.glb
 *.blend
