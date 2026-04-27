@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GLB Scatter</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0a0a;
+      color: #e8e4dc;
+      font-family: 'DM Mono', ui-monospace, monospace;
+      overflow: hidden;
+      height: 100dvh;
+    }
+
+    canvas { display: block; }
+
+    /* ── HUD overlay ── */
+    #hud {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      background: rgba(10,10,10,0.72);
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(12px);
+      padding: 0.75rem 1.25rem;
+      border-radius: 999px;
+      z-index: 10;
+    }
+
+    button {
+      font-family: inherit;
+      font-size: 0.72rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #e8e4dc;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 999px;
+      padding: 0.45rem 1.1rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    button:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.3); }
+    button:active { background: rgba(255,255,255,0.13); transform: scale(0.97); }
+    button.accent {
+      background: #e8e4dc;
+      color: #0a0a0a;
+      border-color: transparent;
+    }
+    button.accent:hover { background: #fff; }
+
+    #sep { width: 1px; height: 1.2rem; background: rgba(255,255,255,0.12); }
+
+    /* ── status ── */
+    #status {
+      position: fixed;
+      top: 1.5rem;
+      left: 1.5rem;
+      font-size: 0.68rem;
+      letter-spacing: 0.08em;
+      color: rgba(232,228,220,0.35);
+      text-transform: uppercase;
+      z-index: 10;
+      line-height: 1.8;
+    }
+
+    /* ── drop zone hint ── */
+    #drop-hint {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 5;
+      opacity: 1;
+      transition: opacity 0.4s;
+    }
+    #drop-hint.hidden { opacity: 0; }
+    #drop-hint p {
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(232,228,220,0.2);
+      margin-top: 0.5rem;
+    }
+    #drop-hint svg {
+      opacity: 0.15;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="status">
+    <div id="status-mesh">meshes — </div>
+    <div id="status-state">state — idle</div>
+  </div>
+
+  <div id="drop-hint">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#e8e4dc" stroke-width="1" stroke-linecap="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <p>drop a .glb here<br>or edit MODEL_URL in main.js</p>
+  </div>
+
+  <div id="hud">
+    <button id="btn-scatter">scatter</button>
+    <div id="sep"></div>
+    <button id="btn-reassemble" class="accent">reassemble</button>
+  </div>
+
+  <script type="module" src="/main.js"></script>
+</body>
+</html>
