@@ -39,14 +39,13 @@ const PHYSICS = {
   gravity: -9.8,
   linearDamping: 0.8, // higher damping so pieces don't overshoot when spring fires
   angularDamping: 0.6,
-  springStiffness: 1.2, // at dist=320, full pinch = 384 N — felt gradually across range
+  springStiffness: 1.2, // how strong the spring force is when pinching
   snapDuration: 0.7,
   snapEase: "power3.out",
   groundY: -3, // world-space Y of the ground plane
 };
 
 // Pinch thresholds (normalised landmark distance)
-// Calibrated from debug: open hand ~0.30, full pinch ~0.05
 const PINCH_CLOSED = 0.05; // below this → t=1 (fully assembled)
 const PINCH_OPEN = 0.3; // above this → t=0 (fully scattered)
 const PINCH_HOLD_MS = 300;
@@ -64,7 +63,7 @@ const calibrated = {
 // Ratio of closed/open — geometrically stable across hand sizes + distances
 const PINCH_CLOSED_RATIO = 0.2; // full pinch ≈ 20% of open spread
 // Active mapping range: map [closed, open*0.85] → [1, 0]
-// The 0.85 ceiling gives headroom so you don't need to stretch fingers fully
+// The 0.85 ceiling gives headroom so we don't need to stretch fingers fully
 
 // ─────────────────────────────────────
 // AUDIO
@@ -365,7 +364,7 @@ function createBody(mesh) {
 
   const body = rapierWorld.createRigidBody(bodyDesc);
 
-  // Ball collider sized to mesh bounding sphere — good enough for scatter dynamics
+  // Ball collider sized to mesh bounding sphere
   const box = new THREE.Box3().setFromObject(mesh);
   const size = box.getSize(new THREE.Vector3());
   const r = Math.max(size.x, size.y, size.z) * 0.35;
