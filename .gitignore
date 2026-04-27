@@ -3,5 +3,5 @@
 /build
 /.cache
 
-*.glb
+/assets/*.glb
 *.blend
