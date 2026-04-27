@@ -30,13 +30,13 @@ import RAPIER from "@dimforge/rapier3d-compat";
 const MODEL_URL = "./wedo.glb";
 
 const SCATTER = {
-  impulseScale: 280, // must overpower gravity + damping to reach ~radius 320
-  torqueScale: 60,
-  randomVariance: 0.35,
+  impulseScale: 0.8, // calibrated for TARGET_MODEL_SIZE = 4 world units
+  torqueScale: 0.2,
+  randomVariance: 0.1,
 };
 
 const PHYSICS = {
-  gravity: -2,
+  gravity: -9.8,
   linearDamping: 0.8, // higher damping so pieces don't overshoot when spring fires
   angularDamping: 0.6,
   springStiffness: 1.2, // at dist=320, full pinch = 384 N — felt gradually across range
@@ -342,9 +342,9 @@ function scatter() {
 
     body.applyTorqueImpulse(
       {
-        x: (Math.random() - 0.5) * SCATTER.torqueScale,
-        y: (Math.random() - 0.5) * SCATTER.torqueScale,
-        z: (Math.random() - 0.5) * SCATTER.torqueScale,
+        x: (Math.random() - 0.05) * SCATTER.torqueScale,
+        y: (Math.random() - 0.05) * SCATTER.torqueScale,
+        z: (Math.random() - 0.05) * SCATTER.torqueScale,
       },
       true,
     );
@@ -701,7 +701,9 @@ document
   ?.addEventListener("click", snapToAssembled);
 
 const fileInput = document.getElementById("file-input");
-document.getElementById("btn-upload")?.addEventListener("click", () => fileInput.click());
+document
+  .getElementById("btn-upload")
+  ?.addEventListener("click", () => fileInput.click());
 fileInput?.addEventListener("change", () => {
   const file = fileInput.files[0];
   if (!file) return;
@@ -725,16 +727,25 @@ document.addEventListener("drop", (e) => {
 // UTILS
 // ─────────────────────────────────────
 
+const TARGET_MODEL_SIZE = 4; // world units — SCATTER.impulseScale is calibrated for this
+
 function fitToCamera(model, cam) {
   const box = new THREE.Box3().setFromObject(model);
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  model.position.sub(center);
   const maxDim = Math.max(size.x, size.y, size.z);
+
+  // Normalize every model to TARGET_MODEL_SIZE so scatter impulse is consistent
+  const scale = TARGET_MODEL_SIZE / maxDim;
+  model.scale.setScalar(scale);
+
+  // Center bbox at world origin accounting for applied scale
+  model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+
   const fovRad = (cam.fov * Math.PI) / 180;
-  cam.position.z = (maxDim / 2 / Math.tan(fovRad / 2)) * 1.6;
-  cam.near = maxDim * 0.001;
-  cam.far = maxDim * 200;
+  cam.position.z = (TARGET_MODEL_SIZE / 2 / Math.tan(fovRad / 2)) * 3.2;
+  cam.near = TARGET_MODEL_SIZE * 0.001;
+  cam.far = TARGET_MODEL_SIZE * 200;
   cam.updateProjectionMatrix();
   controls.target.set(0, 0, 0);
   controls.update();
