@@ -1,238 +1,283 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GLB Scatter</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GLB Scatter</title>
 
-  <!-- MediaPipe Hands via CDN — no npm install needed -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- MediaPipe Hands via CDN — no npm install needed -->
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
+      crossorigin="anonymous"
+    ></script>
 
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
 
-    body {
-      background: #0a0a0a;
-      color: #e8e4dc;
-      font-family: 'DM Mono', ui-monospace, monospace;
-      overflow: hidden;
-      height: 100dvh;
-    }
+      body {
+        background: #0a0a0a;
+        color: #e8e4dc;
+        font-family: "DM Mono", ui-monospace, monospace;
+        overflow: hidden;
+        height: 100dvh;
+      }
 
-    canvas { display: block; }
+      canvas {
+        display: block;
+      }
 
-    /* ── hidden MediaPipe video feed ── */
-    #mp-video {
-      position: fixed;
-      width: 1px; height: 1px;
-      opacity: 0;
-      pointer-events: none;
-    }
+      /* ── hidden MediaPipe video feed ── */
+      #mp-video {
+        position: fixed;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        pointer-events: none;
+      }
 
-    /* ── hand debug overlay (top-right corner) ── */
-    #mp-canvas {
-      position: fixed;
-      top: 1rem;
-      right: 1rem;
-      width: 160px;
-      height: 120px;
-      border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(10,10,10,0.5);
-      z-index: 20;
-      transform: scaleX(-1); /* mirror for natural feel */
-    }
+      /* ── hand debug overlay (top-right corner) ── */
+      #mp-canvas {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        width: 160px;
+        height: 120px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(10, 10, 10, 0.5);
+        z-index: 20;
+        transform: scaleX(-1); /* mirror for natural feel */
+      }
 
-    /* ── status (top-left) ── */
-    #status {
-      position: fixed;
-      top: 1.5rem;
-      left: 1.5rem;
-      font-size: 0.68rem;
-      letter-spacing: 0.08em;
-      color: rgba(232,228,220,0.35);
-      text-transform: uppercase;
-      z-index: 10;
-      line-height: 1.8;
-    }
+      /* ── status (top-left) ── */
+      #status {
+        position: fixed;
+        top: 1.5rem;
+        left: 1.5rem;
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        color: beige;
+        text-transform: uppercase;
+        z-index: 10;
+        line-height: 1.8;
+      }
 
-    /* ── hand indicator dot ── */
-    #hand-dot {
-      display: inline-block;
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.15);
-      margin-right: 6px;
-      vertical-align: middle;
-      transition: background 0.2s;
-    }
-    #hand-dot.active { background: #7cffb2; }
+      /* ── hand indicator dot ── */
+      #hand-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.15);
+        margin-right: 6px;
+        vertical-align: middle;
+        transition: background 0.2s;
+      }
+      #hand-dot.active {
+        background: #7cffb2;
+      }
 
-    /* ── pinch progress bar ── */
-    #pinch-bar {
-      position: fixed;
-      bottom: 5.5rem;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 200px;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-    }
-    #pinch-label {
-      font-size: 0.62rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: rgba(232,228,220,0.3);
-    }
-    #pinch-track {
-      width: 100%;
-      height: 3px;
-      background: rgba(255,255,255,0.08);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-    #pinch-fill {
-      height: 100%;
-      width: 0%;
-      background: #7cffb2;
-      border-radius: 2px;
-      transition: width 0.05s linear;
-    }
+      /* ── pinch progress bar ── */
+      #pinch-bar {
+        position: fixed;
+        bottom: 5.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 200px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+      }
 
-    /* ── HUD buttons ── */
-    #hud {
-      position: fixed;
-      bottom: 2rem;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      background: rgba(10,10,10,0.72);
-      border: 1px solid rgba(255,255,255,0.08);
-      backdrop-filter: blur(12px);
-      padding: 0.75rem 1.25rem;
-      border-radius: 999px;
-      z-index: 10;
-    }
+      #pinch-track {
+        width: 100%;
+        height: 3px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      #pinch-fill {
+        height: 100%;
+        width: 0%;
+        background: #7cffb2;
+        border-radius: 2px;
+        transition: width 0.05s linear;
+      }
 
-    button {
-      font-family: inherit;
-      font-size: 0.72rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: #e8e4dc;
-      background: transparent;
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 999px;
-      padding: 0.45rem 1.1rem;
-      cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    button:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.3); }
-    button:active { background: rgba(255,255,255,0.13); transform: scale(0.97); }
-    button.accent {
-      background: #e8e4dc;
-      color: #0a0a0a;
-      border-color: transparent;
-    }
-    button.accent:hover { background: #fff; }
+      /* ── HUD buttons ── */
+      #hud {
+        position: fixed;
+        bottom: 2rem;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        background: rgba(10, 10, 10, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(12px);
+        padding: 0.75rem 1.25rem;
+        border-radius: 999px;
+        z-index: 10;
+      }
 
-    #sep { width: 1px; height: 1.2rem; background: rgba(255,255,255,0.12); }
+      button {
+        font-family: inherit;
+        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #e8e4dc;
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 999px;
+        padding: 0.45rem 1.1rem;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+      button:hover {
+        background: rgba(255, 255, 255, 0.07);
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+      button:active {
+        background: rgba(255, 255, 255, 0.13);
+        transform: scale(0.97);
+      }
+      button.accent {
+        background: #e8e4dc;
+        color: #0a0a0a;
+        border-color: transparent;
+      }
+      button.accent:hover {
+        background: #fff;
+      }
 
-    /* ── gesture hint ── */
-    #gesture-hint {
-      position: fixed;
-      bottom: 9rem;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 0.62rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: rgba(232,228,220,0.2);
-      z-index: 10;
-      white-space: nowrap;
-      text-align: center;
-      line-height: 1.8;
-    }
+      #sep {
+        width: 1px;
+        height: 1.2rem;
+        background: rgba(255, 255, 255, 0.12);
+      }
 
-    /* ── drop zone hint ── */
-    #drop-hint {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      text-align: center;
-      pointer-events: none;
-      z-index: 5;
-      opacity: 1;
-      transition: opacity 0.4s;
-    }
-    #drop-hint.hidden { opacity: 0; }
-    #drop-hint p {
-      font-size: 0.72rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: rgba(232,228,220,0.2);
-      margin-top: 0.5rem;
-    }
-    #drop-hint svg { opacity: 0.15; }
-  </style>
-</head>
-<body>
+      /* ── gesture hint ── */
+      #gesture-hint {
+        position: fixed;
+        bottom: 7rem;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.62rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: rgba(232, 228, 220, 0.7);
+        background: rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(8px);
+        padding: 0.25rem 0.75rem;
+        border-radius: 4px;
+        z-index: 10;
+        white-space: nowrap;
+        text-align: center;
+        line-height: 1.8;
+      }
 
-  <!-- MediaPipe hidden video input -->
-  <video id="mp-video" playsinline></video>
+      /* ── drop zone hint ── */
+      #drop-hint {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        pointer-events: none;
+        z-index: 5;
+        opacity: 1;
+        transition: opacity 0.4s;
+      }
+      #drop-hint.hidden {
+        opacity: 0;
+      }
+      #drop-hint p {
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(232, 228, 220, 0.2);
+        margin-top: 0.5rem;
+      }
+      #drop-hint svg {
+        opacity: 0.15;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- MediaPipe hidden video input -->
+    <video id="mp-video" playsinline></video>
 
-  <!-- Hand tracking debug overlay -->
-  <canvas id="mp-canvas"></canvas>
+    <!-- Hand tracking debug overlay -->
+    <canvas id="mp-canvas"></canvas>
 
-  <!-- Status (top-left) -->
-  <div id="status">
-    <div id="status-mesh">meshes — </div>
-    <div id="status-state">
-      <span id="hand-dot"></span>state — idle
+    <!-- Status (top-left) -->
+    <div id="status">
+      <div id="status-mesh">meshes —</div>
+      <div id="status-state"><span id="hand-dot"></span>state — idle</div>
     </div>
-  </div>
 
-  <!-- Gesture hint -->
-  <div id="gesture-hint">
-    pinch to assemble &nbsp;·&nbsp; hold pinch to lock &nbsp;·&nbsp; open hand to scatter
-  </div>
+    <div id="context">
+      <!-- Gesture hint -->
+      <div id="gesture-hint">
+        pinch to assemble &nbsp;·&nbsp; hold pinch to lock &nbsp;·&nbsp; open
+        hand to scatter
+      </div>
 
-  <!-- Pinch progress bar -->
-  <div id="pinch-bar">
-    <div id="pinch-label">pinch</div>
-    <div id="pinch-track">
-      <div id="pinch-fill"></div>
+      <!-- Pinch progress bar -->
+      <div id="pinch-bar">
+        <div id="pinch-track">
+          <div id="pinch-fill"></div>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <!-- Buttons (fallback) -->
-  <input id="file-input" type="file" accept=".glb" style="display:none">
-  <div id="hud">
-    <button id="btn-scatter">scatter</button>
-    <div id="sep"></div>
-    <button id="btn-reassemble" class="accent">reassemble</button>
-    <div id="sep"></div>
-    <button id="btn-upload">upload model</button>
-  </div>
+    <!-- Buttons (fallback) -->
+    <input id="file-input" type="file" accept=".glb" style="display: none" />
+    <div id="hud">
+      <button id="btn-scatter">scatter</button>
+      <div id="sep"></div>
+      <button id="btn-reassemble" class="accent">reassemble</button>
+      <div id="sep"></div>
+      <button id="btn-upload">upload model</button>
+    </div>
 
-  <!-- Drop hint -->
-  <div id="drop-hint">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#e8e4dc" stroke-width="1" stroke-linecap="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-      <polyline points="17 8 12 3 7 8"/>
-      <line x1="12" y1="3" x2="12" y2="15"/>
-    </svg>
-    <p>drop a .glb here<br>or set MODEL_URL in main.js</p>
-  </div>
+    <!-- Drop hint -->
+    <div id="drop-hint">
+      <svg
+        width="48"
+        height="48"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#e8e4dc"
+        stroke-width="1"
+        stroke-linecap="round"
+      >
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+      </svg>
+      <p>drop a .glb here</p>
+    </div>
 
-  <script type="module" src="/main.js"></script>
-</body>
+    <script type="module" src="/main.js"></script>
+  </body>
 </html>
