@@ -4,5 +4,5 @@
 /.cache
 
 ./*.glb
-public/*.glb
+public/assets/*.glb
 *.blend
