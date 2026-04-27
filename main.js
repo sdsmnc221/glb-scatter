@@ -42,7 +42,6 @@ const PHYSICS = {
   springStiffness: 1.2, // how strong the spring force is when pinching
   snapDuration: 0.7,
   snapEase: "power3.out",
-  groundY: -3, // world-space Y of the ground plane
 };
 
 // Pinch thresholds (normalised landmark distance)
@@ -103,59 +102,6 @@ camera.position.set(0, 2, 8);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
-
-function createPixelGrassTexture() {
-  const tileSize = 64; // canvas px per tile
-  const pixelSize = 4; // px per "pixel art pixel"
-  const cols = tileSize / pixelSize;
-
-  const palette = [
-    "#1a3a0f",
-    "#2d5a1b",
-    "#3a7020",
-    "#4a8f28",
-    "#5aaa30",
-    "#6abf3a",
-    "#3d6e1a",
-    "#2a4e12",
-    "#4f9a25",
-  ];
-
-  const canvas = document.createElement("canvas");
-  canvas.width = tileSize;
-  canvas.height = tileSize;
-  const ctx = canvas.getContext("2d");
-
-  // seeded-ish noise: deterministic per cell so tiling looks intentional
-  for (let row = 0; row < cols; row++) {
-    for (let col = 0; col < cols; col++) {
-      const seed = (row * 7 + col * 13) % palette.length;
-      const jitter = (row * col * 3 + col * 5) % palette.length;
-      ctx.fillStyle = palette[(seed + jitter) % palette.length];
-      ctx.fillRect(col * pixelSize, row * pixelSize, pixelSize, pixelSize);
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.magFilter = THREE.NearestFilter; // hard pixel edges — no blur
-  tex.minFilter = THREE.NearestFilter;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(40, 40); // tile across the 100-unit plane
-  return tex;
-}
-
-const groundMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(100, 100),
-  new THREE.MeshStandardMaterial({
-    map: createPixelGrassTexture(),
-    roughness: 1.0,
-    metalness: 0.0,
-  }),
-);
-groundMesh.rotation.x = -Math.PI / 2;
-groundMesh.position.y = PHYSICS.groundY;
-scene.add(groundMesh);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const key = new THREE.DirectionalLight(0xffffff, 2);
@@ -219,18 +165,6 @@ function setMeshCount(n) {
 async function initRapier() {
   await RAPIER.init();
   rapierWorld = new RAPIER.World({ x: 0, y: PHYSICS.gravity, z: 0 });
-
-  // Static ground collider
-  const groundDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(
-    0,
-    PHYSICS.groundY,
-    0,
-  );
-  const groundBody = rapierWorld.createRigidBody(groundDesc);
-  rapierWorld.createCollider(
-    RAPIER.ColliderDesc.cuboid(50, 0.1, 50),
-    groundBody,
-  );
 
   console.log("Rapier ready");
 }
