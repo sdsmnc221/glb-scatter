@@ -700,6 +700,15 @@ document
   .getElementById("btn-reassemble")
   ?.addEventListener("click", snapToAssembled);
 
+const fileInput = document.getElementById("file-input");
+document.getElementById("btn-upload")?.addEventListener("click", () => fileInput.click());
+fileInput?.addEventListener("change", () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  loadModel(URL.createObjectURL(file));
+  fileInput.value = "";
+});
+
 // ─────────────────────────────────────
 // DRAG & DROP
 // ─────────────────────────────────────
