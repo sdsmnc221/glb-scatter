@@ -307,18 +307,22 @@ function destroyAllBodies() {
 function scatter() {
   if (!meshes.length) return;
 
+  if (assembleTimeline) {
+    assembleTimeline.kill();
+    assembleTimeline = null;
+  }
   gsap.killTweensOf(meshes.map((m) => m.position));
   gsap.killTweensOf(meshes.map((m) => m.rotation));
   destroyAllBodies();
 
   assembleT = 0;
+  timelineMode = false;
   handControlActive = true;
   setStatus("hand-control");
 
   for (const mesh of meshes) {
     const origin = originMap.get(mesh);
 
-    // Reset to origin so body starts at rest position
     mesh.position.copy(origin);
     mesh.rotation.set(0, 0, 0);
 
@@ -326,7 +330,6 @@ function scatter() {
     if (!body) continue;
     bodyMap.set(mesh, body);
 
-    // Random outward impulse
     const dir = new THREE.Vector3(
       Math.random() * 2 - 1,
       Math.random() * 2 - 1,
@@ -337,7 +340,6 @@ function scatter() {
       (1 - SCATTER.randomVariance + Math.random() * SCATTER.randomVariance * 2);
     body.applyImpulse({ x: dir.x * mag, y: dir.y * mag, z: dir.z * mag }, true);
 
-    // Random torque
     body.applyTorqueImpulse(
       {
         x: (Math.random() - 0.5) * SCATTER.torqueScale,
@@ -349,6 +351,10 @@ function scatter() {
   }
 
   physicsActive = true;
+
+  // Build the paused timeline from scattered positions after one physics frame
+  // so the 'from' positions are the actual scattered spots
+  setTimeout(buildAssembleTimeline, 50);
 }
 
 // ─────────────────────────────────────
@@ -364,33 +370,6 @@ const _worldOrigin = new THREE.Vector3();
 function tickPhysics() {
   if (!physicsActive || !rapierWorld) return;
 
-  // Apply spring force toward each mesh's world-space origin, scaled by assembleT
-  if (assembleT > 0.01) {
-    for (const [mesh, body] of bodyMap) {
-      const localOrigin = originMap.get(mesh);
-      if (!localOrigin) continue;
-
-      // Convert local origin → world space
-      _worldOrigin.copy(localOrigin);
-      if (mesh.parent) {
-        mesh.parent.updateWorldMatrix(true, false);
-        _worldOrigin.applyMatrix4(mesh.parent.matrixWorld);
-      }
-
-      const t = body.translation();
-      _bodyPos.set(t.x, t.y, t.z);
-
-      _springForce
-        .subVectors(_worldOrigin, _bodyPos)
-        .multiplyScalar(PHYSICS.springStiffness * assembleT);
-
-      body.addForce(
-        { x: _springForce.x, y: _springForce.y, z: _springForce.z },
-        true,
-      );
-    }
-  }
-
   rapierWorld.step();
 
   // Sync THREE.Mesh transforms from Rapier bodies
@@ -398,7 +377,6 @@ function tickPhysics() {
     const t = body.translation();
     const r = body.rotation();
 
-    // World position → local space of parent
     _bodyPos.set(t.x, t.y, t.z);
     if (mesh.parent) {
       mesh.parent.updateWorldMatrix(true, false);
@@ -406,7 +384,6 @@ function tickPhysics() {
     }
     mesh.position.copy(_bodyPos);
 
-    // World quaternion → local quaternion of parent
     _bodyQuat.set(r.x, r.y, r.z, r.w);
     if (mesh.parent) {
       mesh.parent.getWorldQuaternion(_parentQuat);
@@ -417,41 +394,105 @@ function tickPhysics() {
 }
 
 // ─────────────────────────────────────
-// SNAP — kill physics, GSAP to exact origin
+// ASSEMBLE TIMELINE — paused, scrubbed by pinch
+// ─────────────────────────────────────
+
+let assembleTimeline = null; // gsap.timeline({ paused: true })
+let timelineMode = false; // false = physics driving, true = timeline driving
+
+// Threshold at which we hand off from physics → timeline
+const TIMELINE_THRESHOLD = 0.25;
+
+/**
+ * Build (or rebuild) the paused assembly timeline.
+ * Called once after scatter settles, or whenever we need to rebuild
+ * from current mesh positions (e.g. when scrubbing back to physics).
+ */
+function buildAssembleTimeline() {
+  if (assembleTimeline) {
+    assembleTimeline.kill();
+    assembleTimeline = null;
+  }
+
+  const tl = gsap.timeline({
+    paused: true,
+    onComplete: () => {
+      setStatus("assembled");
+      hand.wasOpen = false; // re-arm: next open hand will scatter
+    },
+  });
+
+  meshes.forEach((mesh, i) => {
+    const origin = originMap.get(mesh);
+    if (!origin) return;
+
+    // from: current position (wherever physics left it)
+    // to:   origin
+    const delay = i * 0.012; // stagger so pieces arrive sequentially
+    tl.to(
+      mesh.position,
+      {
+        x: origin.x,
+        y: origin.y,
+        z: origin.z,
+        duration: 1.2,
+        ease: "power2.inOut",
+      },
+      delay,
+    );
+    tl.to(
+      mesh.rotation,
+      {
+        x: 0,
+        y: 0,
+        z: 0,
+        duration: 1.2,
+        ease: "power2.inOut",
+      },
+      delay,
+    );
+  });
+
+  assembleTimeline = tl;
+  timelineMode = false;
+}
+
+// ─────────────────────────────────────
+// SNAP — freeze physics, let timeline play to end
 // ─────────────────────────────────────
 
 function snapToAssembled() {
   if (!meshes.length) return;
 
-  // Zero velocities before destroying so meshes don't lurch
+  // Freeze and destroy bodies
   for (const body of bodyMap.values()) {
     body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
   destroyAllBodies();
-  handControlActive = false;
+  physicsActive = false;
+  timelineMode = false;
   setStatus("snapping…");
 
-  meshes.forEach((mesh, i) => {
-    const origin = originMap.get(mesh);
-    if (!origin) return;
-    gsap.to(mesh.position, {
-      x: origin.x,
-      y: origin.y,
-      z: origin.z,
-      duration: PHYSICS.snapDuration,
-      ease: PHYSICS.snapEase,
-      onComplete:
-        i === meshes.length - 1 ? () => setStatus("assembled") : undefined,
+  // If timeline was already scrubbed to end, onComplete won't fire — finish manually
+  const currentProgress = assembleTimeline ? assembleTimeline.progress() : 1;
+
+  if (assembleTimeline && currentProgress < 0.999) {
+    // Play remaining portion to end
+    assembleTimeline.play();
+    // onComplete on the timeline will call setStatus("assembled") + reset wasOpen
+  } else {
+    // Already at end — just snap state directly
+    // Make sure all meshes are exactly at origin
+    meshes.forEach((mesh) => {
+      const origin = originMap.get(mesh);
+      if (!origin) return;
+      mesh.position.copy(origin);
+      mesh.rotation.set(0, 0, 0);
     });
-    gsap.to(mesh.rotation, {
-      x: 0,
-      y: 0,
-      z: 0,
-      duration: PHYSICS.snapDuration,
-      ease: PHYSICS.snapEase,
-    });
-  });
+    setStatus("assembled");
+    hand.wasOpen = false; // re-arm for next open-hand scatter
+  }
 }
 
 // ─────────────────────────────────────
@@ -559,17 +600,13 @@ async function initMediaPipe() {
 // ─────────────────────────────────────
 
 function tickHandControl() {
-  // Smooth raw sensor noise
   hand.pinch += (hand.rawPinch - hand.pinch) * 0.15;
 
-  // Don't drive anything until calibrated
   if (!calibrated.ready) return;
 
-  const rangeOpen = calibrated.open * 0.85; // ceiling — don't need full stretch
-  const rangeClosed = calibrated.closed; // floor — full pinch
+  const rangeOpen = calibrated.open * 0.85;
+  const rangeClosed = calibrated.closed;
 
-  // Map [rangeOpen → rangeClosed] to [0 → 1]
-  // pinch distance shrinks as hand closes, so invert
   assembleT = THREE.MathUtils.clamp(
     1 - (hand.pinch - rangeClosed) / (rangeOpen - rangeClosed),
     0,
@@ -581,12 +618,23 @@ function tickHandControl() {
   if (ui.pinchLabel)
     ui.pinchLabel.textContent = `raw:${hand.rawPinch.toFixed(3)}  t:${assembleT.toFixed(2)}  open:${calibrated.open.toFixed(3)}  ${appState}`;
 
-  // Open-hand re-scatter
-  if (appState === "assembled" || appState === "hand-control") {
+  // ── Open-hand re-scatter ──
+  if (
+    appState === "assembled" ||
+    appState === "snapping…" ||
+    appState === "hand-control"
+  ) {
     if (assembleT < 0.12) {
       if (!hand.wasOpen) {
         hand.wasOpen = true;
-        if (appState === "assembled") scatter();
+        // Scatter from both assembled and snapping states
+        if (appState === "assembled" || appState === "snapping…") {
+          if (assembleTimeline) {
+            assembleTimeline.kill();
+            assembleTimeline = null;
+          }
+          scatter();
+        }
       }
     } else if (assembleT > 0.35) {
       hand.wasOpen = false;
@@ -594,8 +642,43 @@ function tickHandControl() {
   }
 
   if (!handControlActive) return;
+  if (!assembleTimeline) return; // still building (50ms after scatter)
 
-  // Full pinch hold → snap
+  // ── Physics → timeline handoff ──
+  // Below TIMELINE_THRESHOLD: physics drives freely
+  // Above: freeze bodies, scrub timeline with pinch
+  if (!timelineMode && assembleT >= TIMELINE_THRESHOLD) {
+    for (const body of bodyMap.values()) {
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      body.sleep();
+    }
+    physicsActive = false;
+    buildAssembleTimeline(); // re-snapshot current positions as tween 'from'
+    timelineMode = true;
+  } else if (timelineMode && assembleT < TIMELINE_THRESHOLD) {
+    // Hand back to physics — wake bodies at current mesh positions
+    for (const [mesh, body] of bodyMap) {
+      const wp = new THREE.Vector3();
+      mesh.getWorldPosition(wp);
+      body.setTranslation({ x: wp.x, y: wp.y, z: wp.z }, true);
+      body.wakeUp();
+    }
+    physicsActive = true;
+    timelineMode = false;
+  }
+
+  if (timelineMode) {
+    // Map assembleT [TIMELINE_THRESHOLD → 1] to timeline progress [0 → 1]
+    const tlProgress = THREE.MathUtils.clamp(
+      (assembleT - TIMELINE_THRESHOLD) / (1 - TIMELINE_THRESHOLD),
+      0,
+      1,
+    );
+    assembleTimeline.progress(tlProgress);
+  }
+
+  // ── Full pinch held → play timeline to end automatically ──
   if (assembleT >= 0.95) {
     if (!hand.fullPinchSince) hand.fullPinchSince = Date.now();
     if (Date.now() - hand.fullPinchSince >= PINCH_HOLD_MS) {
