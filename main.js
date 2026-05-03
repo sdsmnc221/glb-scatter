@@ -44,6 +44,17 @@ const PHYSICS = {
   snapEase: "power3.out",
 };
 
+const POUR = {
+  height: 6,         // units above origin pieces start from
+  spread: 2,         // ±XZ cloud radius
+  fadeMs: 250,       // fade-out duration before teleport (ms)
+  dropDuration: 1.0, // drop animation duration (s)
+  // "storm"    — random rain, chaotic
+  // "cascade"  — rapid waterfall, index-based
+  // "converge" — outside-in vortex, far pieces first
+  stagger: "converge",
+};
+
 // Fist thresholds — self-normalised openness score (fingertip dist / hand scale)
 // Open hand ≈ 0.85+, closed fist ≈ 0.40 and below
 const FIST_OPEN = 0.85; // above this → t=0 (scattered)
@@ -86,6 +97,48 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x020008);
+
+// ── Galaxy ──
+function createGalaxy() {
+  const count = 7000;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const arms = 3;
+  const innerColor = new THREE.Color(0xfff4cc);
+  const outerColor = new THREE.Color(0x2244cc);
+
+  for (let i = 0; i < count; i++) {
+    const radius = 8 + Math.random() * 90;
+    const arm = (i % arms) / arms;
+    const spin = radius * 0.25;
+    const angle = arm * Math.PI * 2 + spin;
+    const spread = (Math.random() - 0.5) * radius * 0.18;
+
+    positions[i * 3]     = Math.cos(angle) * radius + spread;
+    positions[i * 3 + 1] = (Math.random() - 0.5) * 6;
+    positions[i * 3 + 2] = Math.sin(angle) * radius + spread;
+
+    const c = innerColor.clone().lerp(outerColor, radius / 90);
+    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+  return new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.18,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.85,
+    depthWrite: false,
+  }));
+}
+const galaxy = createGalaxy();
+scene.add(galaxy);
+
 const camera = new THREE.PerspectiveCamera(
   45,
   window.innerWidth / window.innerHeight,
@@ -261,6 +314,9 @@ function collectLeafMeshes(root) {
     if (!node.isMesh) return;
     if (node.children.some((c) => c.isMesh)) return;
     node.updateWorldMatrix(true, false);
+    // Clone material per mesh so opacity tweens don't bleed across shared materials
+    node.material = node.material.clone();
+    node.material.transparent = true;
     meshes.push(node);
   });
 }
@@ -363,10 +419,6 @@ function scatter() {
   }
 
   physicsActive = true;
-
-  // Build the paused timeline from scattered positions after one physics frame
-  // so the 'from' positions are the actual scattered spots
-  setTimeout(buildAssembleTimeline, 50);
 }
 
 // ─────────────────────────────────────
@@ -415,9 +467,28 @@ let timelineMode = false;
 // Physics runs while hand is open; timeline takes over the moment fist starts closing
 const TIMELINE_THRESHOLD = 0.1;
 
+function staggerDelay(i, origin) {
+  if (POUR.stagger === "storm") {
+    return Math.random() * 1.5;
+  }
+  if (POUR.stagger === "cascade") {
+    return i * 0.03;
+  }
+  // "converge": far-from-centre pieces drop first
+  const dist = Math.sqrt(origin.x ** 2 + origin.y ** 2 + origin.z ** 2);
+  const maxDist = Math.sqrt(
+    Math.max(...meshes.map((m) => {
+      const o = originMap.get(m);
+      return o ? o.x ** 2 + o.y ** 2 + o.z ** 2 : 0;
+    }))
+  );
+  return maxDist > 0 ? (1 - dist / maxDist) * 1.2 : 0;
+}
+
 /**
- * Build the paused assembly timeline from current mesh positions → origins.
- * Called 50ms after scatter so impulse has moved pieces to their scattered spots.
+ * Build the paused pour-from-above assembly timeline.
+ * Pieces are already teleported to their cloud positions before this is called.
+ * Uses fromTo() so seeking in both directions is deterministic — no blinking.
  */
 function buildAssembleTimeline() {
   if (assembleTimeline) {
@@ -430,7 +501,6 @@ function buildAssembleTimeline() {
     onComplete: () => {
       setStatus("assembled");
       hand.wasOpen = false;
-      sfx.assembly.nodes.forEach((n) => n.pause());
     },
   });
 
@@ -438,40 +508,30 @@ function buildAssembleTimeline() {
     const origin = originMap.get(mesh);
     if (!origin) return;
 
-    // from: current position (wherever physics left it)
-    // to:   origin
-    const delay = i * 0.012; // stagger so pieces arrive sequentially
-    tl.to(
+    // Snapshot above position now — fromTo() needs explicit from values
+    const above = { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z };
+    const rot   = { x: mesh.rotation.x,  y: mesh.rotation.y,  z: mesh.rotation.z };
+
+    const delay = staggerDelay(i, origin);
+
+    tl.fromTo(mesh.material, { opacity: 0 }, { opacity: 1, duration: 0.2 }, delay);
+
+    tl.fromTo(
       mesh.position,
-      {
-        x: origin.x,
-        y: origin.y,
-        z: origin.z,
-        duration: 1.2,
-        ease: "power2.inOut",
-        // onComplete:
-        //   Math.round((i % meshes.length) / 120) === 0
-        //     ? playPieceSound
-        //     : undefined, // stagger sound too
-        onStart: i === 12 ? playPieceSound : undefined, // play sound on first piece for now
-      },
+      above,
+      { x: origin.x, y: origin.y, z: origin.z, duration: POUR.dropDuration, ease: "bounce.out", onComplete: playPieceSound },
       delay,
     );
-    tl.to(
+
+    tl.fromTo(
       mesh.rotation,
-      {
-        x: 0,
-        y: 0,
-        z: 0,
-        duration: 1.2,
-        ease: "power2.inOut",
-      },
+      rot,
+      { x: 0, y: 0, z: 0, duration: POUR.dropDuration * 0.5, ease: "power2.out" },
       delay,
     );
   });
 
   assembleTimeline = tl;
-  timelineMode = false;
 }
 
 // ─────────────────────────────────────
@@ -656,10 +716,8 @@ function tickHandControl() {
   }
 
   if (!handControlActive) return;
-  if (!assembleTimeline) return;
 
   // ── Physics → timeline handoff ──
-  // Physics drives while hand is open; timeline takes over on first fist closure
   if (!timelineMode && assembleT >= TIMELINE_THRESHOLD) {
     for (const body of bodyMap.values()) {
       body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -667,11 +725,29 @@ function tickHandControl() {
       body.sleep();
     }
     physicsActive = false;
-    buildAssembleTimeline(); // snapshot scattered positions as timeline 'from'
     timelineMode = true;
+
+    // Fade out all pieces, teleport above cloud positions, then build drop timeline
+    gsap.to(meshes.map((m) => m.material), {
+      opacity: 0,
+      duration: POUR.fadeMs / 1000,
+      onComplete: () => {
+        meshes.forEach((mesh) => {
+          const o = originMap.get(mesh);
+          if (!o) return;
+          mesh.position.set(
+            o.x + (Math.random() - 0.5) * POUR.spread,
+            o.y + POUR.height,
+            o.z + (Math.random() - 0.5) * POUR.spread,
+          );
+          mesh.material.opacity = 0;
+        });
+        buildAssembleTimeline();
+      },
+    });
   }
 
-  if (timelineMode) {
+  if (timelineMode && assembleTimeline) {
     const tlProgress = THREE.MathUtils.clamp(
       (assembleT - TIMELINE_THRESHOLD) / (1 - TIMELINE_THRESHOLD),
       0,
@@ -702,6 +778,13 @@ document
   ?.addEventListener("click", snapToAssembled);
 
 const fileInput = document.getElementById("file-input");
+const staggerModes = ["storm", "cascade", "converge"];
+const btnStagger = document.getElementById("btn-stagger");
+btnStagger?.addEventListener("click", () => {
+  POUR.stagger = staggerModes[(staggerModes.indexOf(POUR.stagger) + 1) % staggerModes.length];
+  if (btnStagger) btnStagger.textContent = `pour: ${POUR.stagger}`;
+});
+
 document
   .getElementById("btn-upload")
   ?.addEventListener("click", () => fileInput.click());
@@ -764,6 +847,7 @@ function fitToCamera(model, cam) {
 
 function animate() {
   requestAnimationFrame(animate);
+  galaxy.rotation.y += 0.00012;
   tickHandControl();
   tickPhysics();
   controls.update();
