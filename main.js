@@ -390,6 +390,7 @@ function scatter() {
   gsap.killTweensOf(meshes.map((m) => m.position));
   gsap.killTweensOf(meshes.map((m) => m.rotation));
   meshes.forEach((m) => { m.material.opacity = 1; });
+  smoothTlProgress = 0;
   destroyAllBodies();
 
   assembleT = 0;
@@ -474,6 +475,7 @@ function tickPhysics() {
 let assembleTimeline = null; // gsap.timeline({ paused: true })
 let fadeOutTween = null;    // standalone fade-out before pour teleport
 let timelineMode = false;
+let smoothTlProgress = 0;   // lerped timeline progress — avoids jitter from hand wobble
 
 // Physics runs while hand is open; timeline takes over the moment fist starts closing
 const TIMELINE_THRESHOLD = 0.1;
@@ -755,7 +757,9 @@ function tickHandControl() {
   if (!handControlActive) return;
 
   // ── Physics → timeline handoff ──
-  if (!timelineMode && assembleT >= TIMELINE_THRESHOLD) {
+  // Guard appState: "snapping…" means assembleTimeline.play() is already running —
+  // don't re-trigger the fade-out or we'll teleport pieces mid-animation.
+  if (!timelineMode && assembleT >= TIMELINE_THRESHOLD && appState === "hand-control") {
     for (const body of bodyMap.values()) {
       body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       body.setAngvel({ x: 0, y: 0, z: 0 }, true);
@@ -792,12 +796,15 @@ function tickHandControl() {
   }
 
   if (timelineMode && assembleTimeline) {
-    const tlProgress = THREE.MathUtils.clamp(
+    const tlTarget = THREE.MathUtils.clamp(
       (assembleT - TIMELINE_THRESHOLD) / (1 - TIMELINE_THRESHOLD),
       0,
       1,
     );
-    assembleTimeline.progress(tlProgress);
+    // Asymmetric lerp: closing feels responsive (0.10), retreating is sticky (0.04)
+    const lerpFactor = tlTarget > smoothTlProgress ? 0.10 : 0.04;
+    smoothTlProgress += (tlTarget - smoothTlProgress) * lerpFactor;
+    assembleTimeline.progress(smoothTlProgress);
   }
 
   // ── Hold closed fist → auto-snap ──
