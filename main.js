@@ -59,11 +59,20 @@ const sfx = {
   assembly: new Audio("/assets/lego-assembly.mp3"),
 };
 sfx.explosion.volume = 0.8;
-sfx.assembly.volume = 0.7;
+sfx.assembly.volume = 0.8;
+sfx.assembly.nodes = [];
 
 function playSound(sound) {
   sound.currentTime = 0;
   sound.play().catch(() => {});
+}
+
+function playPieceSound() {
+  const clone = sfx.assembly.cloneNode(true);
+  clone.volume = sfx.assembly.volume;
+  clone.play().catch(() => {});
+
+  sfx.assembly.nodes.push(clone);
 }
 
 // ─────────────────────────────────────
@@ -421,6 +430,7 @@ function buildAssembleTimeline() {
     onComplete: () => {
       setStatus("assembled");
       hand.wasOpen = false;
+      sfx.assembly.nodes.forEach((n) => n.pause());
     },
   });
 
@@ -439,6 +449,11 @@ function buildAssembleTimeline() {
         z: origin.z,
         duration: 1.2,
         ease: "power2.inOut",
+        // onComplete:
+        //   Math.round((i % meshes.length) / 120) === 0
+        //     ? playPieceSound
+        //     : undefined, // stagger sound too
+        onStart: i === 12 ? playPieceSound : undefined, // play sound on first piece for now
       },
       delay,
     );
