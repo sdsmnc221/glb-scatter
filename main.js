@@ -45,9 +45,9 @@ const PHYSICS = {
 };
 
 const POUR = {
-  height: 10,        // world units above model pieces start from
-  spread: 3,         // ±XZ world-space cloud radius
-  fadeMs: 250,       // fade-out duration before teleport (ms)
+  height: 10, // world units above model pieces start from
+  spread: 3, // ±XZ world-space cloud radius
+  fadeMs: 250, // fade-out duration before teleport (ms)
   dropDuration: 1.0, // drop animation duration (s)
   // "storm"    — random rain, chaotic
   // "cascade"  — rapid waterfall, index-based
@@ -70,7 +70,7 @@ const sfx = {
   assembly: new Audio("/assets/lego-assembly.mp3"),
 };
 sfx.explosion.volume = 0.8;
-sfx.assembly.volume = 0.8;
+sfx.assembly.volume = 0.4;
 sfx.assembly.nodes = [];
 
 function playSound(sound) {
@@ -115,26 +115,31 @@ function createGalaxy() {
     const angle = arm * Math.PI * 2 + spin;
     const spread = (Math.random() - 0.5) * radius * 0.18;
 
-    positions[i * 3]     = Math.cos(angle) * radius + spread;
+    positions[i * 3] = Math.cos(angle) * radius + spread;
     positions[i * 3 + 1] = (Math.random() - 0.5) * 6;
     positions[i * 3 + 2] = Math.sin(angle) * radius + spread;
 
     const c = innerColor.clone().lerp(outerColor, radius / 90);
-    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
   }
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
-  return new THREE.Points(geo, new THREE.PointsMaterial({
-    size: 0.18,
-    sizeAttenuation: true,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.85,
-    depthWrite: false,
-  }));
+  return new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      size: 0.18,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    }),
+  );
 }
 const galaxy = createGalaxy();
 scene.add(galaxy);
@@ -374,12 +379,17 @@ function destroyAllBodies() {
 function scatter() {
   if (!meshes.length) return;
 
+  if (fadeOutTween) {
+    fadeOutTween.kill();
+    fadeOutTween = null;
+  }
   if (assembleTimeline) {
     assembleTimeline.kill();
     assembleTimeline = null;
   }
   gsap.killTweensOf(meshes.map((m) => m.position));
   gsap.killTweensOf(meshes.map((m) => m.rotation));
+  meshes.forEach((m) => { m.material.opacity = 1; });
   destroyAllBodies();
 
   assembleT = 0;
@@ -462,6 +472,7 @@ function tickPhysics() {
 // ─────────────────────────────────────
 
 let assembleTimeline = null; // gsap.timeline({ paused: true })
+let fadeOutTween = null;    // standalone fade-out before pour teleport
 let timelineMode = false;
 
 // Physics runs while hand is open; timeline takes over the moment fist starts closing
@@ -477,10 +488,12 @@ function staggerDelay(i, origin) {
   // "converge": far-from-centre pieces drop first
   const dist = Math.sqrt(origin.x ** 2 + origin.y ** 2 + origin.z ** 2);
   const maxDist = Math.sqrt(
-    Math.max(...meshes.map((m) => {
-      const o = originMap.get(m);
-      return o ? o.x ** 2 + o.y ** 2 + o.z ** 2 : 0;
-    }))
+    Math.max(
+      ...meshes.map((m) => {
+        const o = originMap.get(m);
+        return o ? o.x ** 2 + o.y ** 2 + o.z ** 2 : 0;
+      }),
+    ),
   );
   return maxDist > 0 ? (1 - dist / maxDist) * 1.2 : 0;
 }
@@ -511,24 +524,46 @@ function buildAssembleTimeline() {
     if (!origin) return;
 
     // Snapshot above position now — fromTo() needs explicit from values
-    const above = { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z };
-    const rot   = { x: mesh.rotation.x,  y: mesh.rotation.y,  z: mesh.rotation.z };
+    const above = {
+      x: mesh.position.x,
+      y: mesh.position.y,
+      z: mesh.position.z,
+    };
+    const rot = { x: mesh.rotation.x, y: mesh.rotation.y, z: mesh.rotation.z };
 
     const delay = staggerDelay(i, origin);
 
-    tl.fromTo(mesh.material, { opacity: 0 }, { opacity: 1, duration: 0.2 }, delay);
+    tl.fromTo(
+      mesh.material,
+      { opacity: 0 },
+      { opacity: 1, duration: 0.2 },
+      delay,
+    );
 
     tl.fromTo(
       mesh.position,
       above,
-      { x: origin.x, y: origin.y, z: origin.z, duration: POUR.dropDuration, ease: "bounce.out", onComplete: playPieceSound },
+      {
+        x: origin.x,
+        y: origin.y,
+        z: origin.z,
+        duration: POUR.dropDuration,
+        ease: "bounce.out",
+        onComplete: playPieceSound,
+      },
       delay,
     );
 
     tl.fromTo(
       mesh.rotation,
       rot,
-      { x: 0, y: 0, z: 0, duration: POUR.dropDuration * 0.5, ease: "power2.out" },
+      {
+        x: 0,
+        y: 0,
+        z: 0,
+        duration: POUR.dropDuration * 0.5,
+        ease: "power2.out",
+      },
       delay,
     );
   });
@@ -730,26 +765,30 @@ function tickHandControl() {
     timelineMode = true;
 
     // Fade out all pieces, teleport above cloud positions, then build drop timeline
-    gsap.to(meshes.map((m) => m.material), {
-      opacity: 0,
-      duration: POUR.fadeMs / 1000,
-      onComplete: () => {
-        const _wp = new THREE.Vector3();
-        meshes.forEach((mesh) => {
-          if (!originMap.get(mesh)) return;
+    fadeOutTween = gsap.to(
+      meshes.map((m) => m.material),
+      {
+        opacity: 0,
+        duration: POUR.fadeMs / 1000,
+        onComplete: () => {
+          fadeOutTween = null;
+          const _wp = new THREE.Vector3();
+          meshes.forEach((mesh) => {
+            if (!originMap.get(mesh)) return;
 
-          // Get world position, offset in world space, convert back to local
-          mesh.getWorldPosition(_wp);
-          _wp.x += (Math.random() - 0.5) * POUR.spread;
-          _wp.y += POUR.height;
-          _wp.z += (Math.random() - 0.5) * POUR.spread;
-          if (mesh.parent) mesh.parent.worldToLocal(_wp);
-          mesh.position.copy(_wp);
-          mesh.material.opacity = 0;
-        });
-        buildAssembleTimeline();
+            // Get world position, offset in world space, convert back to local
+            mesh.getWorldPosition(_wp);
+            _wp.x += (Math.random() - 0.5) * POUR.spread;
+            _wp.y += POUR.height;
+            _wp.z += (Math.random() - 0.5) * POUR.spread;
+            if (mesh.parent) mesh.parent.worldToLocal(_wp);
+            mesh.position.copy(_wp);
+            mesh.material.opacity = 0;
+          });
+          buildAssembleTimeline();
+        },
       },
-    });
+    );
   }
 
   if (timelineMode && assembleTimeline) {
@@ -777,16 +816,14 @@ function tickHandControl() {
 // BUTTONS
 // ─────────────────────────────────────
 
-document.getElementById("btn-scatter")?.addEventListener("click", scatter);
-document
-  .getElementById("btn-reassemble")
-  ?.addEventListener("click", snapToAssembled);
-
 const fileInput = document.getElementById("file-input");
 const staggerModes = ["storm", "cascade", "converge"];
 const btnStagger = document.getElementById("btn-stagger");
 btnStagger?.addEventListener("click", () => {
-  POUR.stagger = staggerModes[(staggerModes.indexOf(POUR.stagger) + 1) % staggerModes.length];
+  POUR.stagger =
+    staggerModes[
+      (staggerModes.indexOf(POUR.stagger) + 1) % staggerModes.length
+    ];
   if (btnStagger) btnStagger.textContent = `pour: ${POUR.stagger}`;
 });
 
