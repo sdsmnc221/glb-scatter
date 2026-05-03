@@ -46,8 +46,8 @@ const PHYSICS = {
 
 // Fist thresholds — self-normalised openness score (fingertip dist / hand scale)
 // Open hand ≈ 0.85+, closed fist ≈ 0.40 and below
-const FIST_OPEN = 0.85;   // above this → t=0 (scattered)
-const FIST_CLOSED = 0.40; // below this → t=1 (assembled)
+const FIST_OPEN = 0.85; // above this → t=0 (scattered)
+const FIST_CLOSED = 0.4; // below this → t=1 (assembled)
 const FIST_HOLD_MS = 300; // ms to hold closed fist before auto-snap
 
 // ─────────────────────────────────────
@@ -119,7 +119,7 @@ let physicsActive = false;
 
 // Hand gesture
 const hand = {
-  openness: 0.9,    // smoothed openness (1 = open, 0 = fist)
+  openness: 0.9, // smoothed openness (1 = open, 0 = fist)
   rawOpenness: 0.9,
   fullFistSince: null,
   wasOpen: false,
@@ -420,7 +420,7 @@ function buildAssembleTimeline() {
     paused: true,
     onComplete: () => {
       setStatus("assembled");
-      hand.wasOpen = false; // re-arm: next open hand will scatter
+      hand.wasOpen = false;
     },
   });
 
@@ -480,8 +480,6 @@ function snapToAssembled() {
   const currentProgress = assembleTimeline ? assembleTimeline.progress() : 1;
 
   if (assembleTimeline && currentProgress < 0.999) {
-    // Play remaining portion to end
-    playSound(sfx.assembly);
     assembleTimeline.play();
   } else {
     // Already at end — just snap state directly
@@ -508,12 +506,18 @@ let handsModel = null;
 function measureHandOpenness(landmarks) {
   // Palm center = average of wrist(0) + 4 finger MCPs(5,9,13,17)
   const palmIdx = [0, 5, 9, 13, 17];
-  let px = 0, py = 0;
-  for (const i of palmIdx) { px += landmarks[i].x; py += landmarks[i].y; }
-  px /= palmIdx.length; py /= palmIdx.length;
+  let px = 0,
+    py = 0;
+  for (const i of palmIdx) {
+    px += landmarks[i].x;
+    py += landmarks[i].y;
+  }
+  px /= palmIdx.length;
+  py /= palmIdx.length;
 
   // Hand scale = wrist(0) → middle MCP(9)
-  const w = landmarks[0], m = landmarks[9];
+  const w = landmarks[0],
+    m = landmarks[9];
   const scale = Math.sqrt((w.x - m.x) ** 2 + (w.y - m.y) ** 2);
   if (scale < 0.001) return 0.5;
 
@@ -521,10 +525,11 @@ function measureHandOpenness(landmarks) {
   const tips = [4, 8, 12, 16, 20];
   let avg = 0;
   for (const i of tips) {
-    const dx = landmarks[i].x - px, dy = landmarks[i].y - py;
+    const dx = landmarks[i].x - px,
+      dy = landmarks[i].y - py;
     avg += Math.sqrt(dx * dx + dy * dy);
   }
-  return (avg / tips.length) / scale;
+  return avg / tips.length / scale;
 }
 
 async function initMediaPipe() {
@@ -724,11 +729,17 @@ function fitToCamera(model, cam) {
   model.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
 
   const fovRad = (cam.fov * Math.PI) / 180;
-  cam.position.z = (TARGET_MODEL_SIZE / 2 / Math.tan(fovRad / 2)) * 6.4;
+  const dist = (TARGET_MODEL_SIZE / 2 / Math.tan(fovRad / 2)) * 1.4;
   cam.near = TARGET_MODEL_SIZE * 0.001;
   cam.far = TARGET_MODEL_SIZE * 200;
   cam.updateProjectionMatrix();
+
+  // Reset to rear view, looking straight at model centre
+  cam.position.set(0, 0, -dist);
+  cam.lookAt(0, 0, 0);
   controls.target.set(0, 0, 0);
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 2.4;
   controls.update();
 }
 
