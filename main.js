@@ -482,10 +482,11 @@ const TIMELINE_THRESHOLD = 0.1;
 
 function staggerDelay(i, origin) {
   if (POUR.stagger === "storm") {
-    return Math.random() * 1.5;
+    return Math.random() * 1.2;
   }
   if (POUR.stagger === "cascade") {
-    return i * 0.03;
+    // Normalize by mesh count so range is always 0–0.8 s regardless of piece count
+    return (i / Math.max(meshes.length - 1, 1)) * 0.8;
   }
   // "converge": far-from-centre pieces drop first
   const dist = Math.sqrt(origin.x ** 2 + origin.y ** 2 + origin.z ** 2);
@@ -497,7 +498,7 @@ function staggerDelay(i, origin) {
       }),
     ),
   );
-  return maxDist > 0 ? (1 - dist / maxDist) * 1.2 : 0;
+  return maxDist > 0 ? (1 - dist / maxDist) * 1.0 : 0;
 }
 
 /**
