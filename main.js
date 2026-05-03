@@ -44,25 +44,11 @@ const PHYSICS = {
   snapEase: "power3.out",
 };
 
-// Pinch thresholds (normalised landmark distance)
-const PINCH_CLOSED = 0.05; // below this → t=1 (fully assembled)
-const PINCH_OPEN = 0.3; // above this → t=0 (fully scattered)
-const PINCH_HOLD_MS = 300;
-
-// Auto-calibration — derived from first N frames of open hand
-// Never set manually; tickHandControl reads from calibrated.*
-const calibrated = {
-  open: null, // set after sampling
-  closed: null,
-  ready: false,
-  samples: [],
-  SAMPLE_COUNT: 40, // frames to sample open hand
-};
-
-// Ratio of closed/open — geometrically stable across hand sizes + distances
-const PINCH_CLOSED_RATIO = 0.2; // full pinch ≈ 20% of open spread
-// Active mapping range: map [closed, open*0.85] → [1, 0]
-// The 0.85 ceiling gives headroom so we don't need to stretch fingers fully
+// Fist thresholds — self-normalised openness score (fingertip dist / hand scale)
+// Open hand ≈ 0.85+, closed fist ≈ 0.40 and below
+const FIST_OPEN = 0.85;   // above this → t=0 (scattered)
+const FIST_CLOSED = 0.40; // below this → t=1 (assembled)
+const FIST_HOLD_MS = 300; // ms to hold closed fist before auto-snap
 
 // ─────────────────────────────────────
 // AUDIO
@@ -133,9 +119,9 @@ let physicsActive = false;
 
 // Hand gesture
 const hand = {
-  pinch: 0.3, // safe open-hand default before calibration
-  rawPinch: 0.3,
-  fullPinchSince: null,
+  openness: 0.9,    // smoothed openness (1 = open, 0 = fist)
+  rawOpenness: 0.9,
+  fullFistSince: null,
   wasOpen: false,
 };
 let assembleT = 0;
@@ -415,15 +401,14 @@ function tickPhysics() {
 // ─────────────────────────────────────
 
 let assembleTimeline = null; // gsap.timeline({ paused: true })
-let timelineMode = false; // false = physics driving, true = timeline driving
+let timelineMode = false;
 
-// Threshold at which we hand off from physics → timeline
-const TIMELINE_THRESHOLD = 0.25;
+// Physics runs while hand is open; timeline takes over the moment fist starts closing
+const TIMELINE_THRESHOLD = 0.1;
 
 /**
- * Build (or rebuild) the paused assembly timeline.
- * Called once after scatter settles, or whenever we need to rebuild
- * from current mesh positions (e.g. when scrubbing back to physics).
+ * Build the paused assembly timeline from current mesh positions → origins.
+ * Called 50ms after scatter so impulse has moved pieces to their scattered spots.
  */
 function buildAssembleTimeline() {
   if (assembleTimeline) {
@@ -518,6 +503,30 @@ function snapToAssembled() {
 
 let handsModel = null;
 
+// Returns normalised openness: ~1.0 open hand, ~0.3 closed fist.
+// Self-normalised by hand scale so it's stable across distances + hand sizes.
+function measureHandOpenness(landmarks) {
+  // Palm center = average of wrist(0) + 4 finger MCPs(5,9,13,17)
+  const palmIdx = [0, 5, 9, 13, 17];
+  let px = 0, py = 0;
+  for (const i of palmIdx) { px += landmarks[i].x; py += landmarks[i].y; }
+  px /= palmIdx.length; py /= palmIdx.length;
+
+  // Hand scale = wrist(0) → middle MCP(9)
+  const w = landmarks[0], m = landmarks[9];
+  const scale = Math.sqrt((w.x - m.x) ** 2 + (w.y - m.y) ** 2);
+  if (scale < 0.001) return 0.5;
+
+  // Average distance of all 5 fingertips from palm center, divided by scale
+  const tips = [4, 8, 12, 16, 20];
+  let avg = 0;
+  for (const i of tips) {
+    const dx = landmarks[i].x - px, dy = landmarks[i].y - py;
+    avg += Math.sqrt(dx * dx + dy * dy);
+  }
+  return (avg / tips.length) / scale;
+}
+
 async function initMediaPipe() {
   if (!window.Hands) {
     console.warn("MediaPipe Hands not loaded — check index.html CDN scripts.");
@@ -543,7 +552,7 @@ async function initMediaPipe() {
 
     if (!results.multiHandLandmarks?.length) {
       ui.handDot?.classList.remove("active");
-      hand.rawPinch = hand.pinch; // hold last value — don't treat no-hand as open
+      hand.rawOpenness = hand.openness; // hold last value — no hand ≠ open hand
       return;
     }
 
@@ -562,34 +571,7 @@ async function initMediaPipe() {
       });
     }
 
-    const thumb = landmarks[4];
-    const index = landmarks[8];
-    const dx = thumb.x - index.x;
-    const dy = thumb.y - index.y;
-    hand.rawPinch = Math.sqrt(dx * dx + dy * dy);
-
-    // ── Auto-calibration: sample open hand on first detection ──
-    if (!calibrated.ready) {
-      calibrated.samples.push(hand.rawPinch);
-      const pct = Math.round(
-        (calibrated.samples.length / calibrated.SAMPLE_COUNT) * 100,
-      );
-      setStatus(`calibrating… hold hand open ${pct}%`);
-      if (ui.pinchLabel)
-        ui.pinchLabel.textContent = `sampling raw: ${hand.rawPinch.toFixed(3)}`;
-
-      if (calibrated.samples.length >= calibrated.SAMPLE_COUNT) {
-        // Use median (not mean) — robust against accidental partial pinches during sampling
-        const sorted = [...calibrated.samples].sort((a, b) => a - b);
-        calibrated.open = sorted[Math.floor(sorted.length / 2)];
-        calibrated.closed = calibrated.open * PINCH_CLOSED_RATIO;
-        calibrated.ready = true;
-        console.log(
-          `Calibrated — open: ${calibrated.open.toFixed(3)}, closed: ${calibrated.closed.toFixed(3)}`,
-        );
-        setStatus("hand-ready — scatter to begin");
-      }
-    }
+    hand.rawOpenness = measureHandOpenness(landmarks);
   });
 
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -617,15 +599,11 @@ async function initMediaPipe() {
 // ─────────────────────────────────────
 
 function tickHandControl() {
-  hand.pinch += (hand.rawPinch - hand.pinch) * 0.15;
+  hand.openness += (hand.rawOpenness - hand.openness) * 0.15;
 
-  if (!calibrated.ready) return;
-
-  const rangeOpen = calibrated.open * 0.85;
-  const rangeClosed = calibrated.closed;
-
+  // assembleT: 0 = open hand (scattered), 1 = closed fist (assembled)
   assembleT = THREE.MathUtils.clamp(
-    1 - (hand.pinch - rangeClosed) / (rangeOpen - rangeClosed),
+    1 - (hand.openness - FIST_CLOSED) / (FIST_OPEN - FIST_CLOSED),
     0,
     1,
   );
@@ -633,7 +611,7 @@ function tickHandControl() {
   if (ui.pinchFill)
     ui.pinchFill.style.width = `${Math.round(assembleT * 100)}%`;
   if (ui.pinchLabel)
-    ui.pinchLabel.textContent = `raw:${hand.rawPinch.toFixed(3)}  t:${assembleT.toFixed(2)}  open:${calibrated.open.toFixed(3)}  ${appState}`;
+    ui.pinchLabel.textContent = `openness:${hand.openness.toFixed(2)}  t:${assembleT.toFixed(2)}  ${appState}`;
 
   // ── Open-hand re-scatter ──
   if (
@@ -641,10 +619,9 @@ function tickHandControl() {
     appState === "snapping…" ||
     appState === "hand-control"
   ) {
-    if (assembleT < 0.12) {
+    if (assembleT < 0.15) {
       if (!hand.wasOpen) {
         hand.wasOpen = true;
-        // Scatter from both assembled and snapping states
         if (appState === "assembled" || appState === "snapping…") {
           if (assembleTimeline) {
             assembleTimeline.kill();
@@ -659,11 +636,10 @@ function tickHandControl() {
   }
 
   if (!handControlActive) return;
-  if (!assembleTimeline) return; // still building (50ms after scatter)
+  if (!assembleTimeline) return;
 
   // ── Physics → timeline handoff ──
-  // Below TIMELINE_THRESHOLD: physics drives freely
-  // Above: freeze bodies, scrub timeline with pinch
+  // Physics drives while hand is open; timeline takes over on first fist closure
   if (!timelineMode && assembleT >= TIMELINE_THRESHOLD) {
     for (const body of bodyMap.values()) {
       body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -671,22 +647,11 @@ function tickHandControl() {
       body.sleep();
     }
     physicsActive = false;
-    buildAssembleTimeline(); // re-snapshot current positions as tween 'from'
+    buildAssembleTimeline(); // snapshot scattered positions as timeline 'from'
     timelineMode = true;
-  } else if (timelineMode && assembleT < TIMELINE_THRESHOLD) {
-    // Hand back to physics — wake bodies at current mesh positions
-    for (const [mesh, body] of bodyMap) {
-      const wp = new THREE.Vector3();
-      mesh.getWorldPosition(wp);
-      body.setTranslation({ x: wp.x, y: wp.y, z: wp.z }, true);
-      body.wakeUp();
-    }
-    physicsActive = true;
-    timelineMode = false;
   }
 
   if (timelineMode) {
-    // Map assembleT [TIMELINE_THRESHOLD → 1] to timeline progress [0 → 1]
     const tlProgress = THREE.MathUtils.clamp(
       (assembleT - TIMELINE_THRESHOLD) / (1 - TIMELINE_THRESHOLD),
       0,
@@ -695,16 +660,15 @@ function tickHandControl() {
     assembleTimeline.progress(tlProgress);
   }
 
-  // ── Full pinch held → play timeline to end automatically ──
+  // ── Hold closed fist → auto-snap ──
   if (assembleT >= 0.95) {
-    if (!hand.fullPinchSince) hand.fullPinchSince = Date.now();
-    if (Date.now() - hand.fullPinchSince >= PINCH_HOLD_MS) {
-      hand.fullPinchSince = null;
-      hand.wasOpen = false;
+    if (!hand.fullFistSince) hand.fullFistSince = Date.now();
+    if (Date.now() - hand.fullFistSince >= FIST_HOLD_MS) {
+      hand.fullFistSince = null;
       snapToAssembled();
     }
   } else {
-    hand.fullPinchSince = null;
+    hand.fullFistSince = null;
   }
 }
 
