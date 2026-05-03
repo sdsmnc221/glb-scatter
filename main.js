@@ -45,8 +45,8 @@ const PHYSICS = {
 };
 
 const POUR = {
-  height: 6,         // units above origin pieces start from
-  spread: 2,         // ±XZ cloud radius
+  height: 10,        // world units above model pieces start from
+  spread: 3,         // ±XZ world-space cloud radius
   fadeMs: 250,       // fade-out duration before teleport (ms)
   dropDuration: 1.0, // drop animation duration (s)
   // "storm"    — random rain, chaotic
@@ -499,6 +499,8 @@ function buildAssembleTimeline() {
   const tl = gsap.timeline({
     paused: true,
     onComplete: () => {
+      timelineMode = false;
+      handControlActive = false;
       setStatus("assembled");
       hand.wasOpen = false;
     },
@@ -732,14 +734,17 @@ function tickHandControl() {
       opacity: 0,
       duration: POUR.fadeMs / 1000,
       onComplete: () => {
+        const _wp = new THREE.Vector3();
         meshes.forEach((mesh) => {
-          const o = originMap.get(mesh);
-          if (!o) return;
-          mesh.position.set(
-            o.x + (Math.random() - 0.5) * POUR.spread,
-            o.y + POUR.height,
-            o.z + (Math.random() - 0.5) * POUR.spread,
-          );
+          if (!originMap.get(mesh)) return;
+
+          // Get world position, offset in world space, convert back to local
+          mesh.getWorldPosition(_wp);
+          _wp.x += (Math.random() - 0.5) * POUR.spread;
+          _wp.y += POUR.height;
+          _wp.z += (Math.random() - 0.5) * POUR.spread;
+          if (mesh.parent) mesh.parent.worldToLocal(_wp);
+          mesh.position.copy(_wp);
           mesh.material.opacity = 0;
         });
         buildAssembleTimeline();
